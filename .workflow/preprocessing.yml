@@ -1,0 +1,84 @@
+name: Preprocess Data
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  preprocess:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas scikit-learn
+
+      - name: Ensure preprocessing package importable
+        run: |
+          mkdir -p preprocessing
+          if [ ! -f preprocessing/__init__.py ]; then
+            echo "# package init for preprocessing" > preprocessing/__init__.py
+          fi
+          git status --porcelain || true
+
+      - name: Run preprocessing (read raw CSV, save timestamped CSV)
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+          # path to raw csv in repo root
+          raw_csv = Path('california-housing_raw.csv')
+          if not raw_csv.exists():
+              raise SystemExit("ERROR: raw CSV not found at ./california-housing_raw.csv")
+          df = pd.read_csv(raw_csv)
+          # import the function from your preprocessing script
+          from preprocessing.automate_nawfaldo import automate_preprocessing
+          # call function: save_dir set to preprocessing/california-housing_preprocessing (will be created by function)
+          processed_df, scaler, saved_path = automate_preprocessing(
+              df,
+              save=True,
+              save_dir='preprocessing/california-housing_preprocessing',
+              dataset_name='california-housing_preprocessing',
+              timestamp=True
+          )
+          print("Saved processed file at:", saved_path)
+          # print a short preview
+          print(processed_df.head().to_csv(index=False).splitlines()[:6])
+          PY
+
+      - name: List processed folder
+        run: |
+          echo "Files in preprocessing/california-housing_preprocessing/"
+          ls -lah preprocessing/california-housing_preprocessing || echo "No files found"
+
+      - name: Upload processed CSV as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: california_preprocessed_timestamped
+          path: preprocessing/california-housing_preprocessing
+
+      - name: Commit processed file back to repo (optional)
+        env:
+          GIT_AUTHOR_NAME: "github-actions[bot]"
+          GIT_AUTHOR_EMAIL: "github-actions[bot]@users.noreply.github.com"
+        run: |
+          # stage new files (if any) and commit
+          git config user.name "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
+          git add preprocessing/california-housing_preprocessing || true
+          git commit -m "chore(ci): add/update preprocessing outputs [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:main || echo "Push failed - check permissions"
